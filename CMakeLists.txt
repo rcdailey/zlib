@@ -1,18 +1,13 @@
-cmake_minimum_required(VERSION 2.4.4)
+cmake_minimum_required(VERSION 3.6)
 set(CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS ON)
 
 project(zlib C)
 
-set(VERSION "1.2.11")
+set(VERSION 1.2.11)
 
 option(ASM686 "Enable building i686 assembly implementation")
 option(AMD64 "Enable building amd64 assembly implementation")
-
-set(INSTALL_BIN_DIR "${CMAKE_INSTALL_PREFIX}/bin" CACHE PATH "Installation directory for executables")
-set(INSTALL_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib" CACHE PATH "Installation directory for libraries")
-set(INSTALL_INC_DIR "${CMAKE_INSTALL_PREFIX}/include" CACHE PATH "Installation directory for headers")
-set(INSTALL_MAN_DIR "${CMAKE_INSTALL_PREFIX}/share/man" CACHE PATH "Installation directory for manual pages")
-set(INSTALL_PKGCONFIG_DIR "${CMAKE_INSTALL_PREFIX}/share/pkgconfig" CACHE PATH "Installation directory for pkgconfig (.pc) files")
+option(ZLIB_SKIP_INSTALL_FILES "Disable installation of non-library files" OFF)
 
 include(CheckTypeSize)
 include(CheckFunctionExists)
@@ -23,6 +18,10 @@ enable_testing()
 check_include_file(sys/types.h HAVE_SYS_TYPES_H)
 check_include_file(stdint.h    HAVE_STDINT_H)
 check_include_file(stddef.h    HAVE_STDDEF_H)
+
+if( MSVC )
+    add_definitions(/MP)
+endif()
 
 #
 # Check to see if we have large file support
@@ -60,7 +59,7 @@ endif()
 check_include_file(unistd.h Z_HAVE_UNISTD_H)
 
 if(MSVC)
-    set(CMAKE_DEBUG_POSTFIX "d")
+    set(CMAKE_DEBUG_POSTFIX -debug)
     add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
     add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -162,12 +161,7 @@ if(MSVC)
 	endif()
 endif()
 
-# parse the full version number from zlib.h and include in ZLIB_FULL_VERSION
-file(READ ${CMAKE_CURRENT_SOURCE_DIR}/zlib.h _zlib_h_contents)
-string(REGEX REPLACE ".*#define[ \t]+ZLIB_VERSION[ \t]+\"([-0-9A-Za-z.]+)\".*"
-    "\\1" ZLIB_FULL_VERSION ${_zlib_h_contents})
-
-if(MINGW)
+if(MINGW AND BUILD_SHARED_LIBS)
     # This gets us DLL resource information when compiling on MinGW.
     if(NOT CMAKE_RC_COMPILER)
         set(CMAKE_RC_COMPILER windres.exe)
@@ -181,49 +175,77 @@ if(MINGW)
                             -o ${CMAKE_CURRENT_BINARY_DIR}/zlib1rc.obj
                             -i ${CMAKE_CURRENT_SOURCE_DIR}/win32/zlib1.rc)
     set(ZLIB_DLL_SRCS ${CMAKE_CURRENT_BINARY_DIR}/zlib1rc.obj)
-endif(MINGW)
+endif()
 
-add_library(zlib SHARED ${ZLIB_SRCS} ${ZLIB_ASMS} ${ZLIB_DLL_SRCS} ${ZLIB_PUBLIC_HDRS} ${ZLIB_PRIVATE_HDRS})
-add_library(zlibstatic STATIC ${ZLIB_SRCS} ${ZLIB_ASMS} ${ZLIB_PUBLIC_HDRS} ${ZLIB_PRIVATE_HDRS})
-set_target_properties(zlib PROPERTIES DEFINE_SYMBOL ZLIB_DLL)
-set_target_properties(zlib PROPERTIES SOVERSION 1)
+# Set BUILD_SHARED_LIBS through CMake if you want a shared library instead. This defaults to static.
+add_library(zlib ${ZLIB_SRCS} ${ZLIB_ASMS} ${ZLIB_DLL_SRCS} ${ZLIB_PUBLIC_HDRS} ${ZLIB_PRIVATE_HDRS})
+set_target_properties(zlib PROPERTIES
+    VERSION ${VERSION}
+)
 
-if(NOT CYGWIN)
-    # This property causes shared libraries on Linux to have the full version
-    # encoded into their final filename.  We disable this on Cygwin because
-    # it causes cygz-${ZLIB_FULL_VERSION}.dll to be created when cygz.dll
-    # seems to be the default.
-    #
-    # This has no effect with MSVC, on that platform the version info for
-    # the DLL comes from the resource file win32/zlib1.rc
-    set_target_properties(zlib PROPERTIES VERSION ${ZLIB_FULL_VERSION})
+if(BUILD_SHARED_LIBS)
+    set_target_properties(zlib PROPERTIES
+        DEFINE_SYMBOL ZLIB_DLL
+    )
 endif()
 
 if(UNIX)
     # On unix-like platforms the library is almost always called libz
-   set_target_properties(zlib zlibstatic PROPERTIES OUTPUT_NAME z)
+   set_target_properties(zlib PROPERTIES OUTPUT_NAME z)
    if(NOT APPLE)
      set_target_properties(zlib PROPERTIES LINK_FLAGS "-Wl,--version-script,\"${CMAKE_CURRENT_SOURCE_DIR}/zlib.map\"")
    endif()
-elseif(BUILD_SHARED_LIBS AND WIN32)
-    # Creates zlib1.dll when building shared library version
-    set_target_properties(zlib PROPERTIES SUFFIX "1.dll")
+elseif(WIN32)
+   set_target_properties(zlib PROPERTIES OUTPUT_NAME zlib-${VERSION})
 endif()
 
-if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL )
-    install(TARGETS zlib zlibstatic
-        RUNTIME DESTINATION "${INSTALL_BIN_DIR}"
-        ARCHIVE DESTINATION "${INSTALL_LIB_DIR}"
-        LIBRARY DESTINATION "${INSTALL_LIB_DIR}" )
-endif()
-if(NOT SKIP_INSTALL_HEADERS AND NOT SKIP_INSTALL_ALL )
-    install(FILES ${ZLIB_PUBLIC_HDRS} DESTINATION "${INSTALL_INC_DIR}")
-endif()
-if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
-    install(FILES zlib.3 DESTINATION "${INSTALL_MAN_DIR}/man3")
-endif()
-if(NOT SKIP_INSTALL_FILES AND NOT SKIP_INSTALL_ALL )
-    install(FILES ${ZLIB_PC} DESTINATION "${INSTALL_PKGCONFIG_DIR}")
+#============================================================================
+# Installation
+#============================================================================
+# Note: If you do not want installation, don't run the 'install' target.
+
+include(CMakePackageConfigHelpers)
+
+set(INSTALL_BIN_DIR         bin)
+set(INSTALL_LIB_DIR         lib)
+set(INSTALL_INC_DIR         include)
+set(INSTALL_MAN_DIR         share/man/man3)
+set(INSTALL_PKGCONFIG_DIR   share/pkgconfig)
+set(INSTALL_CMAKE_DIR       ${INSTALL_LIB_DIR}/zlib-${VERSION}/cmake)
+
+install(TARGETS zlib EXPORT zlib-targets
+    RUNTIME DESTINATION ${INSTALL_BIN_DIR}
+    ARCHIVE DESTINATION ${INSTALL_LIB_DIR}
+    LIBRARY DESTINATION ${INSTALL_LIB_DIR}
+    INCLUDES DESTINATION ${INSTALL_INC_DIR}
+)
+
+install(
+    EXPORT zlib-targets
+    DESTINATION ${INSTALL_CMAKE_DIR}
+    NAMESPACE zlib::
+)
+
+configure_file(cmake/zlib-config.cmake.in zlib-config.cmake @ONLY)
+
+write_basic_package_version_file(
+    zlib-config-version.cmake
+    VERSION ${VERSION}
+    COMPATIBILITY AnyNewerVersion
+)
+
+install(
+    FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/zlib-config.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/zlib-config-version.cmake
+    DESTINATION ${INSTALL_CMAKE_DIR}
+)
+
+install(FILES ${ZLIB_PUBLIC_HDRS} DESTINATION ${INSTALL_INC_DIR})
+
+if(NOT ZLIB_SKIP_INSTALL_FILES )
+    install(FILES zlib.3 DESTINATION ${INSTALL_MAN_DIR})
+    install(FILES ${ZLIB_PC} DESTINATION ${INSTALL_PKGCONFIG_DIR})
 endif()
 
 #============================================================================
