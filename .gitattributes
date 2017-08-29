@@ -1,0 +1,6 @@
+* text=auto
+
+# Linux-centric files maintain LF line endings on Windows platforms
+*.sh        eol=lf
+Makefile*   eol=lf
+configure   eol=lf
